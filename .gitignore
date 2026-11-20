@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.cursor/
+
+# personal notes
+*.noter
+!docs/**/*.noter
+.~lock.*

@@ -1,0 +1,6 @@
+# Required
+PyQt5>=5.15
+
+# Optional: each one only enables a feature (see README)
+Pygments>=2.14      # syntax highlighting in the right pane
+Pillow>=9.0         # extra image formats (WebP, TIFF, JPEG 2000, ...)
