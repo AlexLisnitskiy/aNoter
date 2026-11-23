@@ -92,7 +92,7 @@ PALETTE = [
     ("Purple", "#8e24aa"), ("Pink", "#d81b60"), ("Gray", "#9e9e9e"),
 ]
 HIGHLIGHTS = [
-    ("Yellow", "#fff59d"), ("Green", "#c8e6c9"), ("Blue", "#bbdefb"),
+    ("Yellow", "#fff59d"), ("Red", "#ff5252"), ("Green", "#c8e6c9"), ("Blue", "#bbdefb"),
     ("Pink", "#f8bbd0"), ("Orange", "#ffe0b2"), ("Purple", "#e1bee7"),
     ("Gray", "#e0e0e0"),
 ]
@@ -1321,9 +1321,28 @@ class NoteEditor(QTextEdit):
         if q.isValid():
             QDesktopServices.openUrl(q)
 
+    def checkbox_at(self, pos):
+        """The checklist block whose box (the first character) is under a viewport position."""
+        block = self.cursorForPosition(pos).block()
+        if block.text()[:1] not in (CHECK_OFF, CHECK_ON):
+            return None
+        start, end = QTextCursor(block), QTextCursor(block)
+        end.setPosition(block.position() + 1)
+        r0, r1 = self.cursorRect(start), self.cursorRect(end)
+        if r0.x() <= pos.x() <= r1.x() and r0.top() <= pos.y() <= r0.bottom():
+            return block
+        return None
+
     def _hover(self, pos, ctrl):
-        over = ctrl and self.url_at(pos) is not None
-        self.viewport().setCursor(Qt.PointingHandCursor if over else Qt.IBeamCursor)
+        """Mouse cursor: arrow over a checklist box (it is a button, not text), a hand over a
+        link while Ctrl is held, the text beam everywhere else."""
+        if self.checkbox_at(pos) is not None:
+            shape = Qt.ArrowCursor
+        elif ctrl and self.url_at(pos) is not None:
+            shape = Qt.PointingHandCursor
+        else:
+            shape = Qt.IBeamCursor
+        self.viewport().setCursor(shape)
 
     def mouseMoveEvent(self, e):
         super().mouseMoveEvent(e)
@@ -1445,16 +1464,8 @@ class NoteEditor(QTextEdit):
         super().mouseReleaseEvent(e)
         if e.button() != Qt.LeftButton or self.textCursor().hasSelection():
             return
-        c = self.cursorForPosition(e.pos())
-        block = c.block()
-        if block.text()[:1] not in (CHECK_OFF, CHECK_ON):
-            return
-        start = QTextCursor(block)
-        end = QTextCursor(block)
-        end.setPosition(block.position() + 1)
-        x0, x1 = self.cursorRect(start).x(), self.cursorRect(end).x()
-        if x0 <= e.pos().x() <= x1 and self.cursorRect(start).top() <= e.pos().y() \
-                <= self.cursorRect(start).bottom():
+        block = self.checkbox_at(e.pos())
+        if block is not None:
             c = QTextCursor(block)
             c.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor)
             fmt = c.charFormat()
@@ -2958,7 +2969,8 @@ class FilePane(QWidget):
             self.findbar.open(query)
             ed.setFocus()
 
-    def open_file(self, path):
+    def open_file(self, path, quiet=False):
+        """quiet: no dialogs (used when restoring the last session): problems are skipped."""
         path = os.path.abspath(path)
         if self.select(path):
             return
@@ -2967,12 +2979,13 @@ class FilePane(QWidget):
             try:
                 w = RichNoteTab(path, daily=self.is_daily(path))
             except OSError as e:
-                QMessageBox.warning(self, "Open", str(e))
+                if not quiet:
+                    QMessageBox.warning(self, "Open", str(e))
                 return
         elif is_image_path(path):
             w = ImageTab(path)
         else:
-            w = self._text_tab(path)
+            w = self._text_tab(path, quiet)
             if w is None:
                 return
             if HAVE_WEBKIT and path.lower().endswith(HTML_EXTS):
@@ -2998,16 +3011,18 @@ class FilePane(QWidget):
         if isinstance(w, HtmlTab) and w.path == os.path.abspath(path):
             w.set_mode("browser")
 
-    def _text_tab(self, path):
+    def _text_tab(self, path, quiet=False):
         try:
             size = os.path.getsize(path)
             with open(path, "rb") as f:
                 data = f.read(self.MAX_TEXT + 1)
         except OSError as e:
-            QMessageBox.warning(self, "Open", str(e))
+            if not quiet:
+                QMessageBox.warning(self, "Open", str(e))
             return None
         if size > self.MAX_TEXT or b"\0" in data[:8192]:
-            self._external(path, "Binary or very large file - open with the system app?")
+            if not quiet:
+                self._external(path, "Binary or very large file - open with the system app?")
             return None
         try:
             return TextTab(path, data.decode("utf-8"), "utf-8")
@@ -3642,20 +3657,23 @@ class MainWindow(QMainWindow):
 
     # ---- session: reopen the notes that were open last time
     def _restore_session(self):
-        paths = self.settings.value("notes_open", [])
-        if isinstance(paths, str):
-            paths = [paths]
-        for path in paths or []:
-            if os.path.isfile(path):
-                self.notes.open_file(path)
-        cur = self.settings.value("notes_current", "")
-        if cur:
-            self.notes.select(cur)
+        """Reopen the tabs of both panes (and the selected one) from the last run."""
+        for pane, key in ((self.notes, "notes"), (self.files, "files")):
+            paths = self.settings.value(key + "_open", [])
+            if isinstance(paths, str):
+                paths = [paths]
+            for path in paths or []:
+                if os.path.isfile(path):
+                    pane.open_file(path, quiet=True)
+            cur = self.settings.value(key + "_current", "")
+            if cur:
+                pane.select(cur)
 
     def _save_session(self):
-        cur = self.notes.current()
-        self.settings.setValue("notes_open", self.notes.open_paths())
-        self.settings.setValue("notes_current", cur.path if cur is not None else "")
+        for pane, key in ((self.notes, "notes"), (self.files, "files")):
+            cur = pane.current()
+            self.settings.setValue(key + "_open", pane.open_paths())
+            self.settings.setValue(key + "_current", cur.path if cur is not None else "")
 
     # ---- reminders
     def refresh_reminders(self):
